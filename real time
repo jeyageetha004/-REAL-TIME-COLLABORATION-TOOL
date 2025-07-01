@@ -1,0 +1,104 @@
+const express = require('express');
+const http = require('http');
+const WebSocket = require('ws');
+const path = require('path');
+const fs = require('fs');
+
+const app = express();
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
+
+// Shared content for all connected clients
+let sharedContent = "";
+
+// Serve HTML file on root
+app.get('/', (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8" />
+      <title>Collaborative Editor</title>
+      <style>
+        body {
+          font-family: Arial, sans-serif;
+          margin: 0;
+          padding: 0;
+        }
+        h2 {
+          text-align: center;
+          background: #222;
+          color: white;
+          padding: 10px;
+          margin: 0;
+        }
+        textarea {
+          width: 100%;
+          height: 90vh;
+          font-size: 16px;
+          padding: 10px;
+          box-sizing: border-box;
+          font-family: monospace;
+          border: none;
+          outline: none;
+        }
+      </style>
+    </head>
+    <body>
+      <h2>Collaborative Editor (Real-time)</h2>
+      <textarea id="editor" placeholder="Start typing..."></textarea>
+
+      <script>
+        const socket = new WebSocket('ws://' + location.host);
+        const editor = document.getElementById('editor');
+        let ignoreChange = false;
+
+        socket.onmessage = function (event) {
+          const data = JSON.parse(event.data);
+          if (data.type === 'init') {
+            editor.value = data.content;
+          } else if (data.type === 'update') {
+            ignoreChange = true;
+            editor.value = data.content;
+            ignoreChange = false;
+          }
+        };
+
+        editor.addEventListener('input', () => {
+          if (ignoreChange) return;
+          socket.send(JSON.stringify({
+            type: 'edit',
+            content: editor.value
+          }));
+        });
+      </script>
+    </body>
+    </html>
+  `);
+});
+
+// WebSocket server logic
+wss.on('connection', (ws) => {
+  // Send current content to new user
+  ws.send(JSON.stringify({ type: 'init', content: sharedContent }));
+
+  // Listen for edits
+  ws.on('message', (message) => {
+    const data = JSON.parse(message);
+    if (data.type === 'edit') {
+      sharedContent = data.content;
+      // Broadcast to all other clients
+      wss.clients.forEach((client) => {
+        if (client !== ws && client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify({ type: 'update', content: sharedContent }));
+        }
+      });
+    }
+  });
+});
+
+// Start the server
+const PORT = 3000;
+server.listen(PORT, () => {
+  console.log(`🚀 Server running at http://localhost:${PORT}`);
+});
